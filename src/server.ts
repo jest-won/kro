@@ -7,9 +7,9 @@ import express from 'express';
 import cors from 'cors';
 import crypto from 'crypto';
 import { listKiroModels } from './kiro/index.js';
-import { runAgenticLoop } from './kiro/agentic-loop.js';
-import { isKiroAuthenticated, isKiroDatabaseAccessible } from './auth/kiro-token-extractor.js';
-import { REQUEST_BODY_LIMIT } from './constants.js';
+import { runAgenticLoop, kiroUsage } from './kiro/agentic-loop.js';
+import { isKiroAuthenticated, isKiroDatabaseAccessible, getKiroAuthData } from './auth/kiro-token-extractor.js';
+import { REQUEST_BODY_LIMIT, KIRO_ENDPOINTS } from './constants.js';
 import { logger } from './utils/logger.js';
 
 const app = express();
@@ -113,6 +113,39 @@ app.get('/v1/models', async (req, res) => {
                 type: 'api_error',
                 message: error.message
             }
+        });
+    }
+});
+
+/**
+ * Usage endpoint - returns accumulated Kiro credit usage + quota from Kiro API
+ */
+app.get('/v1/usage', async (req, res) => {
+    try {
+        const authData = await getKiroAuthData();
+        const region = authData.region || 'us-east-1';
+        const endpoint = KIRO_ENDPOINTS[region] || KIRO_ENDPOINTS['us-east-1'];
+        const resp = await fetch(`${endpoint}/getUsageLimits`, {
+            headers: { 'Authorization': `Bearer ${authData.accessToken}`, 'User-Agent': 'kiro' }
+        });
+        if (!resp.ok) throw new Error(`${resp.status}`);
+        const data: any = await resp.json();
+        const breakdown = data.usageBreakdownList?.[0];
+        res.json({
+            object: 'usage',
+            session_credits: kiroUsage.total_credits,
+            request_count: kiroUsage.request_count,
+            used: breakdown?.currentUsageWithPrecision ?? null,
+            limit: breakdown?.usageLimitWithPrecision ?? null,
+            overage_cap: breakdown?.overageCapWithPrecision ?? null,
+            days_until_reset: data.daysUntilReset ?? null,
+            plan: data.subscriptionInfo?.subscriptionTitle ?? null
+        });
+    } catch {
+        res.json({
+            object: 'usage',
+            session_credits: kiroUsage.total_credits,
+            request_count: kiroUsage.request_count
         });
     }
 });

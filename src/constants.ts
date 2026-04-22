@@ -40,11 +40,7 @@ export const KIRO_ENDPOINTS = {
 
 // Kiro API paths
 export const KIRO_API_PATHS = {
-    GENERATE_ASSISTANT: '/generateAssistantResponse',  // Main chat endpoint
-    SEND_MESSAGE: '/SendMessageStreaming',             // Alternative chat endpoint
-    MCP: '/mcp',                                       // MCP invocation
-    EXPORT_ARCHIVE: '/exportResultArchive',            // Export results
-    TASK_PLAN: '/generateTaskAssistPlan'               // Task planning
+    GENERATE_ASSISTANT: '/generateAssistantResponse',
 };
 
 // Default AWS region for Kiro

@@ -10,6 +10,9 @@ import { ThinkingParser } from './thinking-parser.js';
 import { logger } from '../utils/logger.js';
 import crypto from 'crypto';
 
+// Accumulated credit usage across all requests (in-memory, resets on restart)
+export const kiroUsage = { total_credits: 0, request_count: 0 };
+
 /**
  * Stream a single Kiro response turn, converting to Anthropic SSE format.
  * Native tool_use events from Kiro are passed through directly.
@@ -18,6 +21,7 @@ export async function* runAgenticLoop(anthropicRequest, signal = null) {
     const messageId = `msg_${crypto.randomUUID().replace(/-/g, '').substring(0, 24)}`;
     const parser = new ThinkingParser();
     const usage: Record<string, number> = { input_tokens: 0, output_tokens: 0 };
+    let sessionCredits = 0;
 
     // Collect all events first to handle thinking/tool_use properly
     const textChunks: string[] = [];
@@ -27,7 +31,11 @@ export async function* runAgenticLoop(anthropicRequest, signal = null) {
         if (signal?.aborted) break;
 
         if (event.type === 'message_delta' && event.usage) {
-            Object.assign(usage, event.usage);
+            if (event.usage.kiro_credits !== undefined) {
+                sessionCredits += event.usage.kiro_credits;
+            } else {
+                Object.assign(usage, event.usage);
+            }
             continue;
         }
 
@@ -64,6 +72,13 @@ export async function* runAgenticLoop(anthropicRequest, signal = null) {
     if (usage.input_tokens === 0) {
         const inputText = JSON.stringify(anthropicRequest.messages) + (anthropicRequest.system || '');
         usage.input_tokens = Math.ceil(inputText.length / 4);
+    }
+
+    // Accumulate credit usage
+    if (sessionCredits > 0) {
+        kiroUsage.total_credits += sessionCredits;
+        kiroUsage.request_count++;
+        logger.debug(`[Kiro] Credits this request: ${sessionCredits}, total: ${kiroUsage.total_credits}`);
     }
 
     // Parse thinking from collected text

@@ -16,6 +16,7 @@ import { buildKiroRequest, buildKiroHeaders, mapModelToKiro } from './request-bu
 import { parseEventStreamAsync } from './aws-event-stream.js';
 import { logger } from '../utils/logger.js';
 import { sleep } from '../utils/helpers.js';
+import crypto from 'crypto';
 
 /**
  * Send a streaming request to Kiro/CodeWhisperer
@@ -187,11 +188,14 @@ function convertKiroEventToAnthropic(eventData, blockIndex, hasOpenBlock) {
         return events;
     }
     
-    // Usage metadata (e.g., {"unit":"credit","usage":0.0022...})
+    // Credit usage metadata (e.g., {"unit":"credit","usage":0.0022...})
     if (eventData.usage !== undefined && eventData.unit !== undefined) {
-        // This is credit/usage info, not token counts
-        // We can log it but don't need to emit an Anthropic event
         logger.debug(`[Kiro] Usage: ${eventData.usage} ${eventData.unitPlural || eventData.unit}`);
+        events.push({
+            type: 'message_delta',
+            delta: {},
+            usage: { kiro_credits: eventData.usage }
+        });
         return events;
     }
     
@@ -253,17 +257,13 @@ function convertKiroEventToAnthropic(eventData, blockIndex, hasOpenBlock) {
     // Tool use events (legacy wrapped format)
     if (eventData.toolUseEvent || eventData.toolUse) {
         const toolUse = eventData.toolUseEvent || eventData.toolUse;
-        
-        // Close any open text block first
+
         if (hasOpenBlock) {
-            events.push({
-                type: 'content_block_stop',
-                index: blockIndex
-            });
+            events.push({ type: 'content_block_stop', index: blockIndex });
         }
-        
-        const newBlockIndex = blockIndex + 1;
-        
+
+        const newBlockIndex = hasOpenBlock ? blockIndex + 1 : blockIndex;
+
         events.push({
             type: 'content_block_start',
             index: newBlockIndex,
@@ -274,26 +274,19 @@ function convertKiroEventToAnthropic(eventData, blockIndex, hasOpenBlock) {
                 input: {}
             }
         });
-        
+
         if (toolUse.input) {
             events.push({
                 type: 'content_block_delta',
                 index: newBlockIndex,
-                delta: {
-                    type: 'input_json_delta',
-                    partial_json: JSON.stringify(toolUse.input)
-                }
+                delta: { type: 'input_json_delta', partial_json: JSON.stringify(toolUse.input) }
             });
         }
-        
-        events.push({
-            type: 'content_block_stop',
-            index: newBlockIndex
-        });
-        
+
+        events.push({ type: 'content_block_stop', index: newBlockIndex });
         return events;
     }
-    
+
     // Code events
     if (eventData.codeEvent) {
         events.push({
