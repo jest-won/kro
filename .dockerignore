@@ -1,0 +1,9 @@
+node_modules
+.env
+*.log
+.git
+.develop-workflow
+README.md
+COMMANDS.md
+.npmignore
+.gitignore
