@@ -11,7 +11,7 @@ import {
     KIRO_DEFAULT_REGION,
     MAX_RETRIES
 } from '../constants.js';
-import { getKiroAuthData } from '../auth/kiro-token-extractor.js';
+import { getKiroAuthData, invalidateTokenCache } from '../auth/kiro-token-extractor.js';
 import { buildKiroRequest, buildKiroHeaders, mapModelToKiro } from './request-builder.js';
 import { parseEventStreamAsync } from './aws-event-stream.js';
 import { logger } from '../utils/logger.js';
@@ -72,9 +72,21 @@ export async function* sendKiroMessageStream(anthropicRequest) {
             if (!response.ok) {
                 const errorText = await response.text();
                 logger.warn(`[Kiro] Stream error ${response.status}: ${errorText}`);
-                
+
                 if (response.status === 401) {
-                    throw new Error('Kiro authentication expired. Please log in again.');
+                    // Invalidate cache and retry once with a fresh token
+                    if (attempt === 0) {
+                        logger.info('[Kiro] 401 received — invalidating token cache and retrying...');
+                        invalidateTokenCache();
+                        const freshAuth = await getKiroAuthData();
+                        const freshToken = freshAuth.accessToken;
+                        if (freshToken && freshToken !== token) {
+                            // Update headers with new token for next attempt
+                            Object.assign(headers, buildKiroHeaders(freshToken, region, true));
+                            continue;
+                        }
+                    }
+                    throw new Error(`UNAUTHENTICATED: Kiro authentication expired (401). ${errorText}`);
                 }
                 
                 if (response.status === 429) {
@@ -100,7 +112,8 @@ export async function* sendKiroMessageStream(anthropicRequest) {
             return; // Success, exit retry loop
             
         } catch (error) {
-            if (error.message.includes('authentication') || 
+            if (error.message.includes('UNAUTHENTICATED') ||
+                error.message.includes('authentication') ||
                 error.message.includes('expired')) {
                 throw error;
             }

@@ -6,5 +6,5 @@ services:
     environment:
       - DEBUG=${DEBUG:-false}
     volumes:
-      - "~/Library/Application Support/kiro-cli:/root/.config/kiro-cli:ro"
+      - "~/Library/Application Support/kiro-cli:/root/.config/kiro-cli"
     restart: unless-stopped
