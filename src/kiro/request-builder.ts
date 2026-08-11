@@ -46,13 +46,41 @@ export function mapModelToKiro(anthropicModel: string): string {
  * Convert Anthropic tool definition to Kiro native toolSpecification
  */
 function convertToolToKiro(tool: any) {
+    const schema = tool.input_schema || { type: 'object', properties: {} };
+    if (!schema.type) schema.type = 'object';
+
     return {
         toolSpecification: {
             name: tool.name,
             description: tool.description || '',
-            inputSchema: { json: tool.input_schema || {} }
+            inputSchema: { json: schema }
         }
     };
+}
+
+/**
+ * Convert an Anthropic server-side tool to a regular tool definition
+ * so the model can invoke it and the proxy can handle execution.
+ */
+function convertServerToolToRegular(tool: any) {
+    if (tool.type === 'web_search_20250305') {
+        return {
+            name: 'web_search',
+            description: 'Search the web for current information. Returns search results with titles, URLs, and descriptions.',
+            input_schema: {
+                type: 'object',
+                properties: {
+                    query: {
+                        type: 'string',
+                        description: 'The search query'
+                    }
+                },
+                required: ['query']
+            }
+        };
+    }
+    // Unknown server tool — skip
+    return null;
 }
 
 /**
@@ -212,9 +240,18 @@ export function buildKiroRequest(anthropicRequest: any) {
     }
 
     // Attach tools and/or toolResults to current message context
+    // Convert server-side tools (e.g. web_search_20250305) to regular tool definitions
+    // so Kiro's model can invoke them. The proxy handles execution.
     const context: any = {};
-    if (tools.length > 0) {
-        context.tools = tools.map(convertToolToKiro);
+    const convertedTools = tools.map((t: any) => {
+        if (t.type && t.type !== 'custom') {
+            // Server tool — convert to a regular tool definition
+            return convertServerToolToRegular(t);
+        }
+        return t;
+    }).filter(Boolean);
+    if (convertedTools.length > 0) {
+        context.tools = convertedTools.map(convertToolToKiro);
     }
     if (currentToolResults.length > 0) {
         context.toolResults = currentToolResults;
