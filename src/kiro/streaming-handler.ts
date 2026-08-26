@@ -39,13 +39,13 @@ export async function* sendKiroMessageStream(anthropicRequest) {
     const authData = await getKiroAuthData();
     const token = authData.accessToken;
     const region = authData.region || KIRO_DEFAULT_REGION;
-    
+
     if (!token) {
         throw new Error('No Kiro authentication token available. Please log in to Kiro CLI first.');
     }
     
     // Build the request payload
-    const payload = buildKiroRequest(anthropicRequest);
+    const payload = buildKiroRequest(anthropicRequest, authData.profileArn);
     
     // Add model to header and request streaming response
     const headers = {
@@ -73,20 +73,27 @@ export async function* sendKiroMessageStream(anthropicRequest) {
                 const errorText = await response.text();
                 logger.warn(`[Kiro] Stream error ${response.status}: ${errorText}`);
 
-                if (response.status === 401) {
-                    // Invalidate cache and retry once with a fresh token
+                if (response.status === 401 || response.status === 403) {
+                    // Both 401 and 403 can indicate an expired/invalid token.
+                    // AWS CodeWhisperer returns 403 "bearer token is invalid"
+                    // when the access token expires, not always 401.
                     if (attempt === 0) {
-                        logger.info('[Kiro] 401 received — invalidating token cache and retrying...');
+                        logger.info(`[Kiro] ${response.status} received — invalidating token cache and retrying...`);
                         invalidateTokenCache();
                         const freshAuth = await getKiroAuthData();
                         const freshToken = freshAuth.accessToken;
+
                         if (freshToken && freshToken !== token) {
                             // Update headers with new token for next attempt
                             Object.assign(headers, buildKiroHeaders(freshToken, region, true));
                             continue;
                         }
                     }
-                    throw new Error(`UNAUTHENTICATED: Kiro authentication expired (401). ${errorText}`);
+                    throw new Error(
+                        `Kiro authorization failed (${response.status}): ${errorText}. ` +
+                        `Re-authenticate with "kiro auth login" ` +
+                        `(profileArn resolved: ${payload.profileArn ?? 'none'}).`
+                    );
                 }
                 
                 if (response.status === 429) {
@@ -114,7 +121,8 @@ export async function* sendKiroMessageStream(anthropicRequest) {
         } catch (error) {
             if (error.message.includes('UNAUTHENTICATED') ||
                 error.message.includes('authentication') ||
-                error.message.includes('expired')) {
+                error.message.includes('expired') ||
+                error.message.includes('authorization failed')) {
                 throw error;
             }
             
