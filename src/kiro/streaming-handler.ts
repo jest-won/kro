@@ -11,7 +11,7 @@ import {
     KIRO_DEFAULT_REGION,
     MAX_RETRIES
 } from '../constants.js';
-import { getKiroAuthData, invalidateTokenCache, isRefreshBlocked } from '../auth/kiro-token-extractor.js';
+import { getKiroAuthData, invalidateTokenCache } from '../auth/kiro-token-extractor.js';
 import { buildKiroRequest, buildKiroHeaders, mapModelToKiro } from './request-builder.js';
 import { parseEventStreamAsync } from './aws-event-stream.js';
 import { logger } from '../utils/logger.js';
@@ -82,14 +82,6 @@ export async function* sendKiroMessageStream(anthropicRequest) {
                         invalidateTokenCache();
                         const freshAuth = await getKiroAuthData();
                         const freshToken = freshAuth.accessToken;
-
-                        // If refresh is blocked (refresh token expired), fail immediately
-                        if (isRefreshBlocked()) {
-                            throw new Error(
-                                `Kiro refresh token expired. Re-authenticate with "kiro auth login" ` +
-                                `(profileArn: ${payload.profileArn ?? 'none'}).`
-                            );
-                        }
 
                         if (freshToken && freshToken !== token) {
                             // Update headers with new token for next attempt
